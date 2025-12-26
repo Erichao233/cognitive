@@ -36,6 +36,7 @@ Rollout and reward:
   - run a multi-turn chat loop with the PlayerSimulator
   - return `messages`, `emo_point`, and a `generation_mask` (assistant-only tokens).
 - Reward is computed by `URLEnvironment.get_reward_batched()` (`code/verl/environments/url_environment.py`), which maps `emo_point` into a token-level reward at the final response token.
+- RAG retrieval is injected inside the multi-turn rollouts using a vector index (see `code/verl/utils/retrieval/strategy_cards.py`), and logs `rag_query`, `rag_card_ids`, and `rag_scores` in `non_tensor_batch`.
 
 ## Key Modules and Responsibilities
 
@@ -53,6 +54,7 @@ Rollout:
 - `code/verl/workers/rollout/vllm_rollout/vllm_rollout.py`: standard vLLM rollout (single-turn).
 - `code/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py`: RLVER multi-turn via chat.
 - `code/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd_think.py`: multi-turn variant that strips `<think>` before simulator response.
+- `code/verl/utils/retrieval/strategy_cards.py`: vector retrieval over `data/strategy_cards.jsonl` using SiliconFlow embeddings.
 
 RLVER simulator and prompt:
 - `code/verl/workers/rollout/vllm_rollout/hard_player_simulator_dsv3.py`: user simulator with emotion state.
@@ -74,6 +76,7 @@ Value loss:
 Reward shaping and advantage:
 - `apply_kl_penalty()` in `code/verl/trainer/ppo/ray_trainer.py` applies token-level KL penalty if ref policy is enabled.
 - `compute_advantage()` supports GAE, GRPO, REINFORCE++, REMAX, and RLOO.
+- GRPO (adv_estimator=`grpo`) bypasses critic updates and uses outcome-based advantages.
 
 ## Paper-Specific vs Generic VERL Components
 
@@ -95,6 +98,7 @@ Generic VERL abstractions (framework):
 
 ## Assumptions and Placeholders to Resolve Before Running
 
-- `system_prompt_trained` is referenced in `code/verl/utils/dataset/rl_dataset.py` but not defined in `system_prompt.py`.
-- `call_api()` in `code/verl/workers/rollout/vllm_rollout/hard_player_simulator_dsv3.py` is a stub.
-- `code/train_rlver.sh` uses placeholders like `YOUR_DIR_TO_SAVE_CKPTS` and a local Ray cluster.
+- Environment variables are required for API calls and logging:
+  - `SILICONFLOW_API_KEY`, `SILICONFLOW_BASE_URL`, `SILICONFLOW_EMBEDDING_MODEL`, `SILICONFLOW_CHAT_MODEL`
+  - `RAG_CACHE_DIR`, `SIMULATOR_CACHE_DIR`, `SIMULATOR_LOG_DIR`, `ROLLOUT_LOG_DIR`
+- `code/train_rlver.sh` still uses placeholders like `YOUR_DIR_TO_SAVE_CKPTS` and assumes a local Ray cluster.
