@@ -114,7 +114,7 @@ python -m verl.trainer.main_ppo \
   +trainer.val_before_train=False \
   trainer.save_freq=10 \
   trainer.save_rollout=True \
-  data.virtual_dataset_size=32000 \
+  +data.virtual_dataset_size=32000 \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
   actor_rollout_ref.rollout.n="${ROLLOUT_N}" \
   actor_rollout_ref.actor.ppo_mini_batch_size=16 \
