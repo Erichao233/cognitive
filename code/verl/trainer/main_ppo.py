@@ -131,16 +131,24 @@ def main_task(config, compute_score=None):
     from verl.utils import hf_tokenizer
     tokenizer = hf_tokenizer(local_path)
 
+    use_critic = config.algorithm.adv_estimator == 'gae'
+
     # define worker classes
     if config.actor_rollout_ref.actor.strategy == 'fsdp':
-        assert config.actor_rollout_ref.actor.strategy == config.critic.strategy
-        from verl.workers.fsdp_workers import ActorRolloutRefWorker, CriticWorker
+        if use_critic:
+            assert config.actor_rollout_ref.actor.strategy == config.critic.strategy
+            from verl.workers.fsdp_workers import ActorRolloutRefWorker, CriticWorker
+        else:
+            from verl.workers.fsdp_workers import ActorRolloutRefWorker
         from verl.single_controller.ray import RayWorkerGroup
         ray_worker_group_cls = RayWorkerGroup
 
     elif config.actor_rollout_ref.actor.strategy == 'megatron':
-        assert config.actor_rollout_ref.actor.strategy == config.critic.strategy
-        from verl.workers.megatron_workers import ActorRolloutRefWorker, CriticWorker
+        if use_critic:
+            assert config.actor_rollout_ref.actor.strategy == config.critic.strategy
+            from verl.workers.megatron_workers import ActorRolloutRefWorker, CriticWorker
+        else:
+            from verl.workers.megatron_workers import ActorRolloutRefWorker
         from verl.single_controller.ray.megatron import NVMegatronRayWorkerGroup
         ray_worker_group_cls = NVMegatronRayWorkerGroup
 
@@ -151,8 +159,9 @@ def main_task(config, compute_score=None):
 
     role_worker_mapping = {
         Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
-        Role.Critic: ray.remote(CriticWorker),
     }
+    if use_critic:
+        role_worker_mapping[Role.Critic] = ray.remote(CriticWorker)
 
     global_pool_id = 'global_pool'
     resource_pool_spec = {
@@ -160,8 +169,9 @@ def main_task(config, compute_score=None):
     }
     mapping = {
         Role.ActorRollout: global_pool_id,
-        Role.Critic: global_pool_id,
     }
+    if use_critic:
+        mapping[Role.Critic] = global_pool_id
 
     # a strict condition to disable kl loss
     disable_kl = (not config.actor_rollout_ref.actor.use_kl_loss) and (config.actor_rollout_ref.actor.kl_loss_coef == 0.0) and (config.algorithm.kl_ctrl.kl_coef == 0.0)
