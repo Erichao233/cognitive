@@ -129,31 +129,35 @@ def compute_grpo_outcome_advantage(token_level_rewards: torch.Tensor,
             shape: (bs, response_length)
     """
     response_length = token_level_rewards.shape[-1]
-    scores = token_level_rewards.sum(dim=-1)
+    scores = token_level_rewards.sum(dim=-1)  # (bs,)
 
-    id2score = defaultdict(list)
-    id2mean = {}
-    id2std = {}
+    if isinstance(index, np.ndarray):
+        index_keys = index.tolist()
+    elif isinstance(index, torch.Tensor):
+        index_keys = index.detach().cpu().tolist()
+    else:
+        index_keys = list(index)
+
+    id2rows = defaultdict(list)
+    for row, key in enumerate(index_keys):
+        id2rows[key].append(row)
 
     with torch.no_grad():
-        bsz = scores.shape[0]
-        for i in range(bsz):
-            id2score[index[i]].append(scores[i])
-        for idx in id2score:
-            print("len(id2score[idx]):",len(id2score[idx]))
-            if len(id2score[idx]) == 1:
-                id2mean[idx] = torch.tensor(0.0)
-                id2std[idx] = torch.tensor(1.0)
-            elif len(id2score[idx]) > 1:
-                id2mean[idx] = torch.mean(torch.tensor(id2score[idx]))
-                id2std[idx] = torch.std(torch.tensor([id2score[idx]]))
+        normalized = scores.clone()
+        for key, rows in id2rows.items():
+            rows_t = torch.as_tensor(rows, device=scores.device)
+            group_scores = scores.index_select(0, rows_t)
+            if group_scores.numel() <= 1:
+                group_mean = group_scores[0]
+                group_std = torch.ones_like(group_mean)
             else:
-                raise ValueError(f"no score in prompt index: {idx}")
-        for i in range(bsz):
-            scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
-        scores = scores.unsqueeze(-1).tile([1, response_length]) * eos_mask
+                group_mean = group_scores.mean()
+                group_std = group_scores.std(unbiased=False).clamp_min(epsilon)
+            normalized.index_copy_(0, rows_t, (group_scores - group_mean) / group_std)
 
-    return scores, scores
+        token_level = normalized.unsqueeze(-1).expand(-1, response_length) * eos_mask
+
+    return token_level, token_level
 
 
 def compute_rloo_outcome_advantage(token_level_rewards: torch.Tensor,

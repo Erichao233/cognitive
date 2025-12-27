@@ -18,22 +18,21 @@ def _canonical_card_id(card: Dict[str, Any]) -> str:
 
 
 def _card_to_text(card: Dict[str, Any]) -> str:
-    parts = [
-        f"title: {card.get('title','')}",
-        f"conditions: {', '.join(card.get('conditions', []))}",
-        f"goal: {card.get('goal','')}",
-        f"steps: {' | '.join(card.get('steps', []))}",
-        f"contraindications: {' | '.join(card.get('contraindications', []))}",
-        f"example_phrases: {' | '.join(card.get('example_phrases', []))}",
-    ]
     metadata = card.get("metadata", {})
+    keywords = []
     if isinstance(metadata, dict):
-        keywords = metadata.get("keywords", [])
-        if keywords:
-            parts.append(f"keywords: {', '.join(keywords)}")
-        family = metadata.get("strategy_family", "")
-        if family:
-            parts.append(f"strategy_family: {family}")
+        keywords = metadata.get("keywords", []) or []
+
+    conditions = card.get("conditions", []) or []
+    goal = card.get("goal", "") or ""
+
+    parts = []
+    if conditions:
+        parts.append(f"conditions: {', '.join(conditions)}")
+    if goal:
+        parts.append(f"goal: {goal}")
+    if keywords:
+        parts.append(f"keywords: {', '.join(keywords)}")
     return "\n".join([p for p in parts if p])
 
 

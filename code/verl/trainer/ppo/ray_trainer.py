@@ -156,11 +156,14 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
     elif adv_estimator == AdvantageEstimator.GRPO:
         token_level_rewards = data.batch['token_level_rewards']
         index = data.non_tensor_batch['uid']
-        print("uid:",index)
         responses = data.batch['responses']
         response_length = responses.size(-1)
         attention_mask = data.batch['attention_mask']
-        response_mask = attention_mask[:, -response_length:]
+        if 'generation_mask' in data.batch.keys():
+            generation_mask = data.batch['generation_mask']
+            response_mask = (attention_mask * generation_mask)[:, -response_length:]
+        else:
+            response_mask = attention_mask[:, -response_length:]
         advantages, returns = core_algos.compute_grpo_outcome_advantage(token_level_rewards=token_level_rewards,
                                                                         eos_mask=response_mask,
                                                                         index=index)

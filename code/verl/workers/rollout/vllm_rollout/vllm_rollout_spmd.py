@@ -50,6 +50,7 @@ from verl.workers.rollout.vllm_rollout.system_prompt import *
 
 from verl.workers.rollout.vllm_rollout.hard_player_simulator_dsv3 import *
 from verl.utils.retrieval import StrategyCardIndex
+from verl.utils.dialogue.think_answer import parse_think_answer, extract_query_from_think, extract_summary_from_think, ensure_closed_tags
 
 import os
 import json
@@ -363,6 +364,14 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
         self.sampling_params = SamplingParams(**kwargs)
 
         self.pad_token_id = tokenizer.pad_token_id
+        rag_cfg = self.config.get("rag", None)
+        self.rag_enabled = bool(rag_cfg and rag_cfg.get("enabled", False))
+        self.rag_index = None
+        if self.rag_enabled:
+            rag_path = rag_cfg.get("path", "data/strategy_cards.jsonl")
+            top_k = rag_cfg.get("top_k", 3)
+            max_chars = rag_cfg.get("max_chars", 2000)
+            self.rag_index = StrategyCardIndex(path=rag_path, top_k=top_k, max_chars=max_chars)
 
     @contextmanager
     def update_sampling_params(self, **kwargs):
@@ -417,10 +426,34 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
         return ""
 
     def _inject_rag(self, messages, rag_text):
+        # Avoid unbounded growth: remove previous RAG system messages.
+        filtered = []
+        for m in messages:
+            if m.get("role") == "system" and isinstance(m.get("content"), str) and m["content"].startswith("Relevant strategy cards:"):
+                continue
+            filtered.append(m)
         rag_msg = {"role": "system", "content": rag_text}
-        if messages and messages[0].get("role") == "system":
-            return [messages[0], rag_msg] + messages[1:]
-        return [rag_msg] + messages
+        if filtered and filtered[0].get("role") == "system":
+            return [filtered[0], rag_msg] + filtered[1:]
+        return [rag_msg] + filtered
+
+    def _control_only_think(self):
+        return {
+            "role": "system",
+            "content": "You MUST output ONLY one closed <think>...</think> block. "
+                       "Inside <think>, include two lines:\n"
+                       "Summary: ...\n"
+                       "Query: ...\n"
+                       "Do NOT output <answer>.",
+        }
+
+    def _control_only_answer(self, think: str):
+        return {
+            "role": "system",
+            "content": "You MUST output ONLY one closed <answer>...</answer> block. "
+                       "Do NOT output <think>. Use the following plan silently:\n"
+                       f"<think>\n{think}\n</think>",
+        }
 
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto,**kwargs)->DataProto:#, environment, **kwargs) -> DataProto: #see verl/single_controller/base/decorator l.54, we can't send these classes as usual.
@@ -474,6 +507,7 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
         player_simulators=expanded_player_simulators
         rag_meta = {
             "rag_query": [None] * (batch_size * n),
+            "rag_summary": [None] * (batch_size * n),
             "rag_card_ids": [None] * (batch_size * n),
             "rag_scores": [None] * (batch_size * n),
         }
@@ -481,15 +515,32 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
         while True:
             turn_count+=1
             messagess_todo=[]
-            rag_queries = []
             for i_batch_sample in todo:
                 messages_=[{"role":msg["role"],"content":msg["content"]} for msg in messagess[i_batch_sample]]
-                if self.rag_enabled and self.rag_index is not None:
-                    query = self._last_user_message(messages_)
-                    rag_queries.append(query)
                 messagess_todo.append(messages_)
 
-            if self.rag_enabled and self.rag_index is not None and rag_queries:
+            think_texts = [None] * len(messagess_todo)
+            rag_queries = [None] * len(messagess_todo)
+
+            if self.rag_enabled and self.rag_index is not None:
+                think_messages = [m + [self._control_only_think()] for m in messagess_todo]
+                with self.update_sampling_params(**{"temperature": 0.0, "top_p": 1.0, "top_k": -1}):
+                    assert self.sampling_params.n == 1, "n should be 1 for multi-turn"
+                    think_outputs = self.inference_engine.chat(
+                        messages=think_messages,
+                        sampling_params=self.sampling_params,
+                        use_tqdm=False)
+
+                for i, output in enumerate(think_outputs):
+                    token_ids = output.outputs[0].token_ids
+                    think_raw = self.tokenizer.decode(token_ids, skip_special_tokens=True)
+                    parsed = parse_think_answer(think_raw)
+                    think = parsed.think or think_raw.strip()
+                    think_texts[i] = think
+                    rag_queries[i] = extract_query_from_think(think) or self._last_user_message(messagess_todo[i])
+                    sample_idx = todo[i]
+                    rag_meta["rag_summary"][sample_idx] = extract_summary_from_think(think)
+
                 rag_results = self.rag_index.retrieve_batch(rag_queries, top_k=self.rag_index.top_k)
                 for i, results in enumerate(rag_results):
                     rag_text = self.rag_index.format_cards(results)
@@ -498,29 +549,44 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
                     rag_meta["rag_query"][sample_idx] = rag_queries[i]
                     rag_meta["rag_card_ids"][sample_idx] = [r.uid for r in results]
                     rag_meta["rag_scores"][sample_idx] = [r.score for r in results]
-            with self.update_sampling_params(**kwargs):
-                assert self.sampling_params.n==1,"n should be 1 for multi-turn"
-                outputs = self.inference_engine.chat(
-                    messages=messagess_todo,
-                    sampling_params=self.sampling_params,
-                    use_tqdm=False)
-            response = []
-            for output in outputs:
-                for sample_id in range(len(output.outputs)):
-                    response.append(output.outputs[sample_id].token_ids)
-            print(f"response: {response}")
-            if not response:
-                raise ValueError("response is empty,messagess_todo:",messagess_todo)
 
-            assert len(response[0]) <= self.config.environment.per_turn_length,"Bug: response too long from vllm: "+str(len(response[0]))
+                answer_messages = [
+                    messagess_todo[i] + [self._control_only_answer(think_texts[i] or "")]
+                    for i in range(len(messagess_todo))
+                ]
+                with self.update_sampling_params(**kwargs):
+                    assert self.sampling_params.n == 1, "n should be 1 for multi-turn"
+                    answer_outputs = self.inference_engine.chat(
+                        messages=answer_messages,
+                        sampling_params=self.sampling_params,
+                        use_tqdm=False)
+
+                response_texts = []
+                for i, output in enumerate(answer_outputs):
+                    token_ids = output.outputs[0].token_ids
+                    raw = self.tokenizer.decode(token_ids, skip_special_tokens=True)
+                    parsed = parse_think_answer(raw)
+                    answer = parsed.answer or raw.strip()
+                    final_text = ensure_closed_tags(think_texts[i] or "", answer)
+                    response_texts.append(final_text)
+            else:
+                with self.update_sampling_params(**kwargs):
+                    assert self.sampling_params.n==1,"n should be 1 for multi-turn"
+                    outputs = self.inference_engine.chat(
+                        messages=messagess_todo,
+                        sampling_params=self.sampling_params,
+                        use_tqdm=False)
+                response_texts = []
+                for output in outputs:
+                    token_ids = output.outputs[0].token_ids
+                    response_texts.append(self.tokenizer.decode(token_ids, skip_special_tokens=True))
 
             #trim responses
-            assert len(todo)==len(response)
+            assert len(todo)==len(response_texts)
             new_todo = []  
-            for i_batch_sample,response_ in zip(todo,response):
-                if all(token == self.pad_token_id for token in response_):
+            for i_batch_sample, response_text in zip(todo, response_texts):
+                if not response_text.strip():
                     continue
-                response_text=self.tokenizer.decode(response_,skip_special_tokens=True)
                 messagess[i_batch_sample].append({"role":"assistant","content":response_text})
                 new_todo.append(i_batch_sample)  
 
@@ -538,7 +604,8 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
                 swapped_messages={"role":"user","content":msg[-1]["content"]}
                 content = swapped_messages["content"]
 
-                extracted_content = content
+                parsed = parse_think_answer(content)
+                extracted_content = parsed.answer or content
 
                 
                 env_response_message = player_simulators[i].reply(extracted_content)
@@ -637,6 +704,7 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
         if self.rag_enabled:
             non_tensor_batch.update({
                 'rag_query': to_1d_np_array(rag_meta["rag_query"]),
+                'rag_summary': to_1d_np_array(rag_meta["rag_summary"]),
                 'rag_card_ids': to_1d_np_array(rag_meta["rag_card_ids"]),
                 'rag_scores': to_1d_np_array(rag_meta["rag_scores"]),
             })
