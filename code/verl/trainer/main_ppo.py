@@ -131,7 +131,7 @@ def main_task(config, compute_score=None):
 
     # instantiate tokenizer
     from verl.utils import hf_tokenizer
-    tokenizer = hf_tokenizer(local_path)
+    tokenizer = hf_tokenizer(local_path, trust_remote_code=config.actor_rollout_ref.model.get('trust_remote_code', False))
 
     use_critic = config.algorithm.adv_estimator == 'gae'
 

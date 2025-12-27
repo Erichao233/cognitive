@@ -40,7 +40,6 @@ from verl.trainer.ppo import core_algos
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
 from verl.utils.dataset.rl_dataset import RLHFDataset, collate_fn
-from verl.utils.dialogue.dialogue_client import DialogueClient
 from verl.utils.torch_functional import get_eos_mask
 from torch.utils.data import RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -577,8 +576,13 @@ class RayPPOTrainer(object):
 
         if use_virtual_dataset:
             # 验证数据集也使用虚拟模式，但通常较小
-            val_virtual_size = self.config.data.get('val_virtual_dataset_size', 
-                                                  self.config.data.get('val_batch_size', 32) * 10)  # 默认10个批次用于验证
+            val_batch_size = self.config.data.get('val_batch_size', None)
+            if val_batch_size is None:
+                val_batch_size = self.config.data.get('train_batch_size', 32)
+
+            val_virtual_size = self.config.data.get('val_virtual_dataset_size', None)
+            if val_virtual_size is None:
+                val_virtual_size = val_batch_size * 10  # 默认10个批次用于验证
             
             print(f"Using virtual validation dataset with size: {val_virtual_size}")
             

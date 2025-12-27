@@ -127,7 +127,7 @@ class vLLMRollout(BaseRollout):
         assert model_hf_config.max_position_embeddings >= config.prompt_length + config.response_length, \
             "model context length should be greater than total sequence length"
 
-        self.inference_engine = LLM(
+        llm_kwargs = dict(
             model=model_path,
             enable_sleep_mode=True,
             tensor_parallel_size=tensor_parallel_size,
@@ -143,6 +143,13 @@ class vLLMRollout(BaseRollout):
             enable_chunked_prefill=config.enable_chunked_prefill,
             enable_prefix_caching=True,
         )
+        if config.get("trust_remote_code", False):
+            llm_kwargs["trust_remote_code"] = True
+        try:
+            self.inference_engine = LLM(**llm_kwargs)
+        except TypeError:
+            llm_kwargs.pop("trust_remote_code", None)
+            self.inference_engine = LLM(**llm_kwargs)
 
         # Offload vllm model to reduce peak memory usage
         self.inference_engine.sleep(level=1)
@@ -320,7 +327,7 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
         self.total_length = config.prompt_length + config.response_length
         print(f"model_path: {model_path}")
         print(f"config: {config}")
-        self.inference_engine = LLM(
+        llm_kwargs = dict(
             model=model_path,
             enable_sleep_mode=True,
             tensor_parallel_size=tensor_parallel_size,
@@ -336,6 +343,13 @@ class vLLMMultiTurnViaChatRollout(BaseRollout):
             enable_chunked_prefill=config.enable_chunked_prefill,
             enable_prefix_caching=True,
         )
+        if config.get("trust_remote_code", False):
+            llm_kwargs["trust_remote_code"] = True
+        try:
+            self.inference_engine = LLM(**llm_kwargs)
+        except TypeError:
+            llm_kwargs.pop("trust_remote_code", None)
+            self.inference_engine = LLM(**llm_kwargs)
 
         # Offload vllm model to reduce peak memory usage
         self.inference_engine.sleep(level=1)

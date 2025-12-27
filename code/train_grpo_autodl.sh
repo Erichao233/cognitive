@@ -73,6 +73,31 @@ if [[ "${ROLLOUT_N}" -lt 2 ]]; then
   exit 1
 fi
 
+resolve_hf_snapshot() {
+  local p="$1"
+  if [[ -f "${p}/config.json" ]]; then
+    echo "${p}"
+    return 0
+  fi
+  if [[ -d "${p}/snapshots" ]]; then
+    local snap
+    snap="$(ls -1dt "${p}/snapshots/"* 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${snap}" && -f "${snap}/config.json" ]]; then
+      echo "${snap}"
+      return 0
+    fi
+  fi
+  echo "${p}"
+  return 0
+}
+
+BASE_MODEL_PATH="$(resolve_hf_snapshot "${BASE_MODEL_PATH}")"
+if [[ ! -f "${BASE_MODEL_PATH}/config.json" ]]; then
+  echo "BASE_MODEL_PATH does not look like a HF model dir (missing config.json): ${BASE_MODEL_PATH}" >&2
+  echo "If you are using HF cache, point BASE_MODEL_PATH to snapshots/<hash>." >&2
+  exit 1
+fi
+
 RAG_PATH="${RAG_PATH:-${REPO_DIR}/data/strategy_cards.jsonl}"
 if [[ ! -f "${RAG_PATH}" ]]; then
   echo "Missing strategy cards file: ${RAG_PATH}" >&2
@@ -122,7 +147,9 @@ python -m verl.trainer.main_ppo \
   data.max_response_length="${MAX_RESPONSE_LENGTH}" \
   data.return_raw_chat=True \
   actor_rollout_ref.model.path="${BASE_MODEL_PATH}" \
+  +actor_rollout_ref.model.trust_remote_code=True \
   actor_rollout_ref.rollout.name=vllm_multi_turn_via_chat \
+  +actor_rollout_ref.rollout.trust_remote_code=True \
   +actor_rollout_ref.rollout.environment.name=url_environment \
   +actor_rollout_ref.rollout.environment.per_turn_length="${PER_TURN_LENGTH}" \
   +actor_rollout_ref.rollout.environment.max_turns="${MAX_TURNS}" \
