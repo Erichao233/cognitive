@@ -19,16 +19,18 @@ import ray
 import hydra
 import torch
 from verl import DataProto
-from verl.utils.reward_score import gsm8k, math, simplerl
 
 import requests
 
 def _default_compute_score(data_source, solution_str, ground_truth):
     if data_source == 'openai/gsm8k':
+        from verl.utils.reward_score import gsm8k
         return gsm8k.compute_score(solution_str, ground_truth)
     elif data_source in ['lighteval/MATH', 'DigitalLearningGmbH/MATH-lighteval']:
+        from verl.utils.reward_score import math
         return math.compute_score(solution_str, ground_truth)
     elif data_source == 'zwhe99/simplerl':
+        from verl.utils.reward_score import simplerl
         return simplerl.compute_score(solution_str, ground_truth)
     else:
         raise NotImplementedError
