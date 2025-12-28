@@ -100,6 +100,36 @@ def _log_vllm_cache_event(prefix: str, msg: str) -> None:
     if _vllm_cache_debug_enabled():
         print(f"[vLLM cache] {prefix}: {msg}", flush=True)
 
+
+def _try_clear_vllm_caches(llm, prefix: str) -> None:
+    if not _vllm_cache_debug_enabled():
+        return
+    try:
+        if hasattr(llm, "free_cache_engine"):
+            llm.free_cache_engine()
+            _log_vllm_cache_event(prefix, "free_cache_engine() OK")
+            return
+        if hasattr(llm, "reset_prefix_cache"):
+            llm.reset_prefix_cache()
+            _log_vllm_cache_event(prefix, "reset_prefix_cache() OK")
+            return
+        _log_vllm_cache_event(prefix, "no cache-clear method on LLM")
+    except Exception as e:
+        _log_vllm_cache_event(prefix, f"cache clear FAILED: {type(e).__name__}: {e}")
+
+
+def _maybe_torch_hard_clear(prefix: str) -> None:
+    if os.getenv("VERL_VLLM_HARD_CLEAR", "0").lower() not in ("1", "true", "yes"):
+        return
+    try:
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        _log_vllm_cache_event(prefix, "torch cuda empty_cache/ipc_collect OK")
+    except Exception as e:
+        _log_vllm_cache_event(prefix, f"torch hard clear FAILED: {type(e).__name__}: {e}")
+
 class vLLMRollout(BaseRollout):
 
     def __init__(self, model_path: str, config: DictConfig, tokenizer, model_hf_config, **kwargs):
@@ -291,11 +321,8 @@ class vLLMRollout(BaseRollout):
 
         # free vllm cache engine (avoid per-step GPU memory growth)
         if self.config.free_cache_engine:
-            try:
-                self.inference_engine.free_cache_engine()
-                _log_vllm_cache_event("single_turn", "free_cache_engine() OK")
-            except Exception as e:
-                _log_vllm_cache_event("single_turn", f"free_cache_engine() FAILED: {type(e).__name__}: {e}")
+            _try_clear_vllm_caches(self.inference_engine, "single_turn")
+            _maybe_torch_hard_clear("single_turn")
 
         return DataProto(batch=batch)
 
@@ -771,10 +798,7 @@ class vLLMMultiTurnViaChatRollout_think(BaseRollout):
             })
         # free vllm cache engine (avoid per-step GPU memory growth)
         if self.config.free_cache_engine:
-            try:
-                self.inference_engine.free_cache_engine()
-                _log_vllm_cache_event("multi_turn", "free_cache_engine() OK")
-            except Exception as e:
-                _log_vllm_cache_event("multi_turn", f"free_cache_engine() FAILED: {type(e).__name__}: {e}")
+            _try_clear_vllm_caches(self.inference_engine, "multi_turn")
+            _maybe_torch_hard_clear("multi_turn")
 
         return DataProto(batch=batch, non_tensor_batch=non_tensor_batch)
