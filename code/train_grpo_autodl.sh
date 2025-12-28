@@ -54,7 +54,7 @@ export SIMULATOR_CACHE_DIR="${SIMULATOR_CACHE_DIR:-${REPO_DIR}/simulator_cache}"
 export SIMULATOR_LOG_DIR="${SIMULATOR_LOG_DIR:-${REPO_DIR}/simulator_logs}"
 export ROLLOUT_LOG_DIR="${ROLLOUT_LOG_DIR:-${REPO_DIR}/rollout_logs}"
 
-BASE_MODEL_PATH="${BASE_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--Qwen--Qwen3-8B}"
+BASE_MODEL_PATH="${BASE_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--Qwen--Qwen2.5-7B-Instruct}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
 ROLLOUT_N="${ROLLOUT_N:-2}"
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
@@ -113,13 +113,25 @@ mkdir -p "${CKPT_DIR}"
 if [[ "${SMOKE_TEST}" == "1" ]]; then
   echo "SMOKE_TEST=1: overriding to a tiny run" >&2
   TOTAL_TRAINING_STEPS=2
-  TRAIN_BATCH_SIZE=2
+  TRAIN_BATCH_SIZE=4
   ROLLOUT_N=2
   MAX_PROMPT_LENGTH=1024
   MAX_RESPONSE_LENGTH=512
   PER_TURN_LENGTH=128
   MAX_TURNS=2
   GPU_MEMORY_UTILIZATION=0.5
+fi
+
+# DataProto is split across DP world_size; generation requires train_batch_size divisible by n_gpus.
+N_GPUS=4
+if [[ "${CUDA_VISIBLE_DEVICES}" == *","* ]]; then
+  N_GPUS=$(( $(echo "${CUDA_VISIBLE_DEVICES}" | awk -F',' '{print NF}') ))
+elif [[ -n "${CUDA_VISIBLE_DEVICES}" ]]; then
+  N_GPUS=1
+fi
+if (( TRAIN_BATCH_SIZE % N_GPUS != 0 )); then
+  echo "train_batch_size must be divisible by number of visible GPUs. train_batch_size=${TRAIN_BATCH_SIZE}, CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}" >&2
+  exit 1
 fi
 
 echo "Repo: ${REPO_DIR}"
