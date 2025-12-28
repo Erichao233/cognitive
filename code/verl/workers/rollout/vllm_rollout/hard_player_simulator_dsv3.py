@@ -83,6 +83,21 @@ def call_api(prompt, mode="dsv3"):
     return reply
 
 
+_INT_RE = re.compile(r"[-+]?\d+")
+
+
+def _safe_parse_int(text: str, default: int = 0) -> int:
+    if text is None:
+        return default
+    m = _INT_RE.search(str(text))
+    if not m:
+        return default
+    try:
+        return int(m.group(0))
+    except Exception:
+        return default
+
+
 class PlayerSimulator:
     def __init__(self,save_dir):
         self.api_key = os.getenv("SILICONFLOW_API_KEY", "YOUR_API_KEY")
@@ -261,7 +276,7 @@ Change:
                     planning["change"] = planning["change"].split("\n")[-1].strip("[").strip("]").strip("“").strip("”")
                 else:
                     planning["change"] = planning["change"].split("\n")[0].strip("[").strip("]").strip("“").strip("”")
-                self.emo_point+=int(planning["change"])
+                self.emo_point += _safe_parse_int(planning["change"], default=0)
                 self.emo_point = min(self.emo_point,100)
                 if reply is not None:
                     break
