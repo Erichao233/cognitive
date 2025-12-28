@@ -59,11 +59,15 @@ export ROLLOUT_LOG_DIR="${ROLLOUT_LOG_DIR:-${REPO_DIR}/rollout_logs}"
 BASE_MODEL_PATH="${BASE_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--Qwen--Qwen2.5-7B-Instruct}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
 ROLLOUT_N="${ROLLOUT_N:-2}"
-MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
-MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
-PER_TURN_LENGTH="${PER_TURN_LENGTH:-256}"
-MAX_TURNS="${MAX_TURNS:-8}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.65}"
+MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-512}"
+PER_TURN_LENGTH="${PER_TURN_LENGTH:-128}"
+MAX_TURNS="${MAX_TURNS:-4}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.40}"
+ENABLE_CHUNKED_PREFILL="${ENABLE_CHUNKED_PREFILL:-false}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-4096}"
+PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-8192}"
+PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.0}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-1.0}"
 FORMAT_REWARD="${FORMAT_REWARD:-0.02}"
@@ -118,12 +122,16 @@ if [[ "${SMOKE_TEST}" == "1" ]]; then
   TOTAL_TRAINING_STEPS=2
   TRAIN_BATCH_SIZE=4
   ROLLOUT_N=2
-  MAX_PROMPT_LENGTH=1024
-  MAX_RESPONSE_LENGTH=512
-  PER_TURN_LENGTH=128
-  MAX_TURNS=2
-  GPU_MEMORY_UTILIZATION=0.5
-  RAG_ENABLED=false
+  MAX_PROMPT_LENGTH=512
+  MAX_RESPONSE_LENGTH=256
+  PER_TURN_LENGTH=64
+  MAX_TURNS=1
+  GPU_MEMORY_UTILIZATION=0.30
+  ENABLE_CHUNKED_PREFILL=false
+  MAX_NUM_BATCHED_TOKENS=2048
+  PPO_MAX_TOKEN_LEN_PER_GPU=4096
+  PPO_MINI_BATCH_SIZE=4
+  RAG_ENABLED=true
 fi
 
 # DataProto is split across DP world_size; generation requires train_batch_size divisible by n_gpus.
@@ -160,7 +168,8 @@ python -m verl.trainer.main_ppo \
   +data.virtual_dataset_size=32000 \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
   actor_rollout_ref.rollout.n="${ROLLOUT_N}" \
-  actor_rollout_ref.actor.ppo_mini_batch_size=16 \
+  actor_rollout_ref.actor.ppo_mini_batch_size="${PPO_MINI_BATCH_SIZE}" \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu="${PPO_MAX_TOKEN_LEN_PER_GPU}" \
   data.max_prompt_length="${MAX_PROMPT_LENGTH}" \
   data.max_response_length="${MAX_RESPONSE_LENGTH}" \
   data.return_raw_chat=True \
@@ -169,6 +178,8 @@ python -m verl.trainer.main_ppo \
   +actor_rollout_ref.model.trust_remote_code=True \
   actor_rollout_ref.rollout.name=vllm_multi_turn_via_chat \
   +actor_rollout_ref.rollout.trust_remote_code=True \
+  actor_rollout_ref.rollout.enable_chunked_prefill="${ENABLE_CHUNKED_PREFILL}" \
+  actor_rollout_ref.rollout.max_num_batched_tokens="${MAX_NUM_BATCHED_TOKENS}" \
   +actor_rollout_ref.rollout.environment.name=url_environment \
   +actor_rollout_ref.rollout.environment.per_turn_length="${PER_TURN_LENGTH}" \
   +actor_rollout_ref.rollout.environment.max_turns="${MAX_TURNS}" \
