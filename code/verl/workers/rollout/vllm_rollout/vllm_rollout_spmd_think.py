@@ -91,6 +91,15 @@ def pad_to_max_stack(tensor_list: List[torch.Tensor], pad_token_id: int) -> torc
         padded_tensor_list.append(torch.cat([t,torch.tensor([pad_token_id]*(max_len-t.size(0)),device=t.device,dtype=t.dtype)],dim=0))
     return torch.stack(padded_tensor_list,dim=0)
 
+
+def _vllm_cache_debug_enabled() -> bool:
+    return os.getenv("VERL_VLLM_CACHE_DEBUG", "0").lower() in ("1", "true", "yes")
+
+
+def _log_vllm_cache_event(prefix: str, msg: str) -> None:
+    if _vllm_cache_debug_enabled():
+        print(f"[vLLM cache] {prefix}: {msg}", flush=True)
+
 class vLLMRollout(BaseRollout):
 
     def __init__(self, model_path: str, config: DictConfig, tokenizer, model_hf_config, **kwargs):
@@ -284,8 +293,9 @@ class vLLMRollout(BaseRollout):
         if self.config.free_cache_engine:
             try:
                 self.inference_engine.free_cache_engine()
-            except Exception:
-                pass
+                _log_vllm_cache_event("single_turn", "free_cache_engine() OK")
+            except Exception as e:
+                _log_vllm_cache_event("single_turn", f"free_cache_engine() FAILED: {type(e).__name__}: {e}")
 
         return DataProto(batch=batch)
 
@@ -759,8 +769,12 @@ class vLLMMultiTurnViaChatRollout_think(BaseRollout):
                 'rag_card_ids': to_1d_np_array(expanded_rag_card_ids),
                 'rag_scores': to_1d_np_array(expanded_rag_scores),
             })
-        # free vllm cache engine
-        if vllm_version in ('0.3.1', '0.4.2', '0.5.4', '0.6.3') and self.config.free_cache_engine:
-            self.inference_engine.free_cache_engine()
+        # free vllm cache engine (avoid per-step GPU memory growth)
+        if self.config.free_cache_engine:
+            try:
+                self.inference_engine.free_cache_engine()
+                _log_vllm_cache_event("multi_turn", "free_cache_engine() OK")
+            except Exception as e:
+                _log_vllm_cache_event("multi_turn", f"free_cache_engine() FAILED: {type(e).__name__}: {e}")
 
         return DataProto(batch=batch, non_tensor_batch=non_tensor_batch)
