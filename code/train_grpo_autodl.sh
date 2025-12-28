@@ -68,6 +68,7 @@ FORMAT_REWARD="${FORMAT_REWARD:-0.02}"
 FORMAT_PENALTY="${FORMAT_PENALTY:-0.0}"
 TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-200}"
 SMOKE_TEST="${SMOKE_TEST:-0}"
+RAG_ENABLED="${RAG_ENABLED:-true}"
 
 if [[ "${ROLLOUT_N}" -lt 2 ]]; then
   echo "ROLLOUT_N must be >= 2 for GRPO; got ${ROLLOUT_N}" >&2
@@ -120,6 +121,7 @@ if [[ "${SMOKE_TEST}" == "1" ]]; then
   PER_TURN_LENGTH=128
   MAX_TURNS=2
   GPU_MEMORY_UTILIZATION=0.5
+  RAG_ENABLED=false
 fi
 
 # DataProto is split across DP world_size; generation requires train_batch_size divisible by n_gpus.
@@ -175,6 +177,6 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.gpu_memory_utilization="${GPU_MEMORY_UTILIZATION}" \
   actor_rollout_ref.actor.use_dynamic_bsz=True \
   +actor_rollout_ref.actor.use_loss_generation_mask=True \
-  actor_rollout_ref.rollout.rag.enabled=True \
+  actor_rollout_ref.rollout.rag.enabled="${RAG_ENABLED}" \
   actor_rollout_ref.rollout.rag.path="${RAG_PATH}" \
   actor_rollout_ref.rollout.rag.top_k=3
