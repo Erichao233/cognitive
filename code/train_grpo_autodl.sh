@@ -58,7 +58,8 @@ export ROLLOUT_LOG_DIR="${ROLLOUT_LOG_DIR:-${REPO_DIR}/rollout_logs}"
 
 BASE_MODEL_PATH="${BASE_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--Qwen--Qwen2.5-7B-Instruct}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
-ROLLOUT_N="${ROLLOUT_N:-2}"
+# GRPO group size (responses per prompt). Set to 4 for stronger within-group comparison.
+ROLLOUT_N="${ROLLOUT_N:-4}"
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-512}"
 PER_TURN_LENGTH="${PER_TURN_LENGTH:-128}"
@@ -72,7 +73,8 @@ ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.0}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-1.0}"
 FORMAT_REWARD="${FORMAT_REWARD:-0.02}"
 FORMAT_PENALTY="${FORMAT_PENALTY:-0.0}"
-TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-200}"
+TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-50}"
+TOTAL_EPOCHS="${TOTAL_EPOCHS:-1}"
 SMOKE_TEST="${SMOKE_TEST:-0}"
 RAG_ENABLED="${RAG_ENABLED:-true}"
 
@@ -120,19 +122,24 @@ mkdir -p "${CKPT_DIR}"
 if [[ "${SMOKE_TEST}" == "1" ]]; then
   echo "SMOKE_TEST=1: overriding to a tiny run" >&2
   TOTAL_TRAINING_STEPS=2
+  TOTAL_EPOCHS=1
   TRAIN_BATCH_SIZE=4
   ROLLOUT_N=2
   MAX_PROMPT_LENGTH=512
   MAX_RESPONSE_LENGTH=256
   PER_TURN_LENGTH=64
   MAX_TURNS=1
-  GPU_MEMORY_UTILIZATION=0.30
+  GPU_MEMORY_UTILIZATION=0.45
   ENABLE_CHUNKED_PREFILL=false
   MAX_NUM_BATCHED_TOKENS=2048
   PPO_MAX_TOKEN_LEN_PER_GPU=4096
   PPO_MINI_BATCH_SIZE=4
   RAG_ENABLED=true
 fi
+
+# Keep dataloader length aligned with TOTAL_TRAINING_STEPS for clearer progress bars and fewer dataset samples.
+VIRTUAL_DATASET_SIZE="${VIRTUAL_DATASET_SIZE:-$(( TOTAL_TRAINING_STEPS * TRAIN_BATCH_SIZE ))}"
+VAL_VIRTUAL_DATASET_SIZE="${VAL_VIRTUAL_DATASET_SIZE:-$(( TRAIN_BATCH_SIZE * 4 ))}"
 
 # DataProto is split across DP world_size; generation requires train_batch_size divisible by n_gpus.
 N_GPUS=4
@@ -161,11 +168,13 @@ python -m verl.trainer.main_ppo \
   trainer.n_gpus_per_node=4 \
   trainer.logger='[console]' \
   trainer.total_training_steps="${TOTAL_TRAINING_STEPS}" \
+  trainer.total_epochs="${TOTAL_EPOCHS}" \
   trainer.default_local_dir="${CKPT_DIR}" \
   +trainer.val_before_train=False \
-  trainer.save_freq=10 \
+  trainer.save_freq=50 \
   trainer.save_rollout=True \
-  +data.virtual_dataset_size=32000 \
+  +data.virtual_dataset_size="${VIRTUAL_DATASET_SIZE}" \
+  +data.val_virtual_dataset_size="${VAL_VIRTUAL_DATASET_SIZE}" \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
   actor_rollout_ref.rollout.n="${ROLLOUT_N}" \
   actor_rollout_ref.actor.ppo_mini_batch_size="${PPO_MINI_BATCH_SIZE}" \
