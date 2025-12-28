@@ -38,6 +38,7 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-16}"
 export HYDRA_FULL_ERROR="${HYDRA_FULL_ERROR:-1}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export RLVER_THINKING="${RLVER_THINKING:-1}"
+export WANDB_MODE="${WANDB_MODE:-disabled}"
 
 export SILICONFLOW_BASE_URL="${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}"
 export SILICONFLOW_EMBEDDING_MODEL="${SILICONFLOW_EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-4B}"
@@ -134,6 +135,7 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.actor.kl_loss_coef=0.0 \
   trainer.nnodes=1 \
   trainer.n_gpus_per_node=4 \
+  trainer.logger='[console]' \
   trainer.total_training_steps="${TOTAL_TRAINING_STEPS}" \
   trainer.default_local_dir="${CKPT_DIR}" \
   +trainer.val_before_train=False \

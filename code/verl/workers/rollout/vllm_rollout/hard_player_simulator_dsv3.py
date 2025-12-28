@@ -107,7 +107,7 @@ class PlayerSimulator:
                      "normal":"演员会分析他人的建议或者鼓舞，并接受其中的善意，言之有理的意见和安慰都能让你感到关心",
                      "hard":"演员比较刻薄，除非有特别贴切演员情绪价值的建议或者鼓励，否演员不会接受，且可能进行讽刺"}
 
-        self.eq_role_file = "data/train_profile.jsonl"
+        self.eq_role_file = "/root/autodl-tmp/cognitive/data/train_profile.jsonl"
 
         self.role = self.generate_role("eq")
         self.chat_player(self.role)
@@ -121,18 +121,19 @@ class PlayerSimulator:
                     data.append(json.loads(line))
             else:
                 for line in datafile:
-                    if json.loads(line)["topic"]==topic:
-                        data.append(json.loads(line))
+                    record = json.loads(line)
+                    if record.get("topic") == topic:
+                        data.append(record)
             role = random.sample(data,1)[0]
         player_data = {
-            "id":role["id"],
+            "id": role.get("id", ""),
             "emo_point": self.emo_point,
             "emo_state": self.emo_state,
             "target": target,
-            "player": role["player"],
-            "scene": role["scene"],
-            "character": role["main_cha"],
-            "topic": role["topic"],
+            "player": role.get("player", ""),
+            "scene": role.get("scene", ""),
+            "character": role.get("main_cha", role.get("character", "")),
+            "topic": role.get("topic", topic or ""),
             "history": []
         }
         return player_data
