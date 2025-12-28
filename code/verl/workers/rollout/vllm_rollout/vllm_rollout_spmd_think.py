@@ -140,7 +140,7 @@ class vLLMRollout(BaseRollout):
             disable_log_stats=config.disable_log_stats,
             max_num_batched_tokens=max_num_batched_tokens,
             enable_chunked_prefill=config.enable_chunked_prefill,
-            enable_prefix_caching=True,
+            enable_prefix_caching=config.get("enable_prefix_caching", True),
         )
         if config.get("trust_remote_code", False):
             llm_kwargs["trust_remote_code"] = True
@@ -280,9 +280,12 @@ class vLLMRollout(BaseRollout):
             },
             batch_size=batch_size)
 
-        # free vllm cache engine
-        if vllm_version in ('0.3.1', '0.4.2', '0.5.4', '0.6.3') and self.config.free_cache_engine:
-            self.inference_engine.free_cache_engine()
+        # free vllm cache engine (avoid per-step GPU memory growth)
+        if self.config.free_cache_engine:
+            try:
+                self.inference_engine.free_cache_engine()
+            except Exception:
+                pass
 
         return DataProto(batch=batch)
 
@@ -338,7 +341,7 @@ class vLLMMultiTurnViaChatRollout_think(BaseRollout):
             disable_log_stats=config.disable_log_stats,
             max_num_batched_tokens=max_num_batched_tokens,
             enable_chunked_prefill=config.enable_chunked_prefill,
-            enable_prefix_caching=True,
+            enable_prefix_caching=config.get("enable_prefix_caching", True),
         )
         if config.get("trust_remote_code", False):
             llm_kwargs["trust_remote_code"] = True

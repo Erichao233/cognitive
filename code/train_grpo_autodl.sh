@@ -163,6 +163,7 @@ python -m verl.trainer.main_ppo \
   data.max_response_length="${MAX_RESPONSE_LENGTH}" \
   data.return_raw_chat=True \
   actor_rollout_ref.model.path="${BASE_MODEL_PATH}" \
+  +actor_rollout_ref.rollout.enable_prefix_caching=False \
   +actor_rollout_ref.model.trust_remote_code=True \
   actor_rollout_ref.rollout.name=vllm_multi_turn_via_chat \
   +actor_rollout_ref.rollout.trust_remote_code=True \
