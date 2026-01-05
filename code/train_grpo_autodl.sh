@@ -82,20 +82,20 @@ BASE_MODEL_PATH="${BASE_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--Qwen--
 
 # Batch size must be divisible by N_GPUS (3). Using 6 for balanced throughput.
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-6}"
-# GRPO group size. Higher = better comparison but more VRAM.
-ROLLOUT_N="${ROLLOUT_N:-4}"
-# Sequence lengths - optimized for 8-10 turn dialogues
-# Each turn: ~256 (agent) + ~128 (user) = ~384 tokens
-# 8 turns = ~3072 tokens response, plus ~2048 prompt = ~5120 total
-MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
-MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-3072}"
-PER_TURN_LENGTH="${PER_TURN_LENGTH:-256}"
+# GRPO group size. Reduced to 2 for memory efficiency (minimum for GRPO).
+ROLLOUT_N="${ROLLOUT_N:-2}"
+# Sequence lengths - optimized for 8 turn dialogues
+# Each turn: ~200 (agent) + ~100 (user) = ~300 tokens
+# 8 turns = ~2400 tokens response, plus ~1536 prompt = ~4000 total
+MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1536}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-2048}"
+PER_TURN_LENGTH="${PER_TURN_LENGTH:-200}"
 MAX_TURNS="${MAX_TURNS:-8}"
-# Memory settings for 3x 96GB H20 (with longer sequences)
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.60}"
+# Memory settings for 3x 96GB H20 (conservative to avoid OOM)
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.45}"
 ENABLE_CHUNKED_PREFILL="${ENABLE_CHUNKED_PREFILL:-true}"
-MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
-PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-20000}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-4096}"
+PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-12000}"
 PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-6}"
 # Sampling
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.0}"
