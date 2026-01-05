@@ -43,7 +43,7 @@ MODEL_PATH="${SIMULATOR_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--Qwen--
 # Server settings
 PORT="${SIMULATOR_PORT:-8000}"
 HOST="${SIMULATOR_HOST:-0.0.0.0}"
-GPU_MEMORY_UTILIZATION="${SIMULATOR_GPU_MEM:-0.3}"  # Conservative to leave room for training
+GPU_MEMORY_UTILIZATION="${SIMULATOR_GPU_MEM:-0.2}"  # Conservative to leave room for training
 MAX_MODEL_LEN="${SIMULATOR_MAX_LEN:-4096}"
 SERVED_MODEL_NAME="${SIMULATOR_SERVED_MODEL_NAME:-${LOCAL_LLM_MODEL_NAME:-Qwen2.5-7B-Instruct}}"
 
