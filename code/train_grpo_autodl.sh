@@ -41,8 +41,10 @@ if [[ "${USE_LOCAL_MODELS}" == "1" ]]; then
   export LOCAL_LLM_BASE_URL="${LOCAL_LLM_BASE_URL:-http://localhost:8000/v1}"
   export SIMULATOR_SERVED_MODEL_NAME="${SIMULATOR_SERVED_MODEL_NAME:-${LOCAL_LLM_MODEL_NAME:-Qwen2.5-7B-Instruct}}"
   export LOCAL_LLM_MODEL_NAME="${LOCAL_LLM_MODEL_NAME:-${SIMULATOR_SERVED_MODEL_NAME}}"
-  export LOCAL_EMBEDDING_MODEL_PATH="${LOCAL_EMBEDDING_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--BAAI--bge-m3}"
+  export LOCAL_EMBEDDING_MODEL_PATH="${LOCAL_EMBEDDING_MODEL_PATH:-BAAI/bge-m3}"
   export LOCAL_EMBEDDING_DEVICE="${LOCAL_EMBEDDING_DEVICE:-cpu}"
+  # Point HuggingFace to your existing cache directory
+  export HF_HOME="${HF_HOME:-/root/autodl-tmp/cache/hf}"
   export USE_LOCAL_EMBEDDING="1"
   export USE_LOCAL_SIMULATOR="1"
   # Dummy API key to pass validation (not actually used)
