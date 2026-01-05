@@ -29,9 +29,9 @@ CODE_DIR="${REPO_DIR}/code"
 
 cd "${CODE_DIR}"
 
-# ============ GPU Configuration (3x H20) ============
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2}"
-N_GPUS=3
+# ============ GPU Configuration (4x H20) ============
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
+N_GPUS=4
 
 # ============ Local vs API Mode ============
 USE_LOCAL_MODELS="${USE_LOCAL_MODELS:-1}"
@@ -80,10 +80,10 @@ export ROLLOUT_LOG_DIR="${ROLLOUT_LOG_DIR:-${REPO_DIR}/rollout_logs}"
 # ============ Model & Training Parameters ============
 BASE_MODEL_PATH="${BASE_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--Qwen--Qwen2.5-7B-Instruct}"
 
-# Batch size must be divisible by N_GPUS (3). Using 6 for balanced throughput.
-TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-6}"
-# GRPO group size. Reduced to 2 for memory efficiency (minimum for GRPO).
-ROLLOUT_N="${ROLLOUT_N:-2}"
+# Batch size must be divisible by N_GPUS (4). Using 8 for balanced throughput.
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
+# GRPO group size. With 4 GPUs we have more memory, can use 4.
+ROLLOUT_N="${ROLLOUT_N:-4}"
 # Sequence lengths - optimized for 8 turn dialogues
 # Each turn: ~200 (agent) + ~100 (user) = ~300 tokens
 # 8 turns = ~2400 tokens response, plus ~1536 prompt = ~4000 total
@@ -96,7 +96,7 @@ GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.45}"
 ENABLE_CHUNKED_PREFILL="${ENABLE_CHUNKED_PREFILL:-true}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-4096}"
 PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-12000}"
-PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-6}"
+PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
 # Sampling
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.0}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-1.0}"
