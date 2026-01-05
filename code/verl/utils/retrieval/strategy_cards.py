@@ -46,7 +46,8 @@ def _post_json(url: str, payload: Dict[str, Any], api_key: str, timeout: int = 3
     return resp.json()
 
 
-def _embed_texts(texts: List[str], api_key: str, base_url: str, model: str, batch_size: int = 64) -> np.ndarray:
+def _embed_texts_api(texts: List[str], api_key: str, base_url: str, model: str, batch_size: int = 64) -> np.ndarray:
+    """Embed texts using remote API (SiliconFlow or compatible)."""
     url = f"{base_url}/embeddings"
     embeddings = []
     for i in range(0, len(texts), batch_size):
@@ -56,6 +57,48 @@ def _embed_texts(texts: List[str], api_key: str, base_url: str, model: str, batc
         for item in data["data"]:
             embeddings.append(item["embedding"])
     return np.array(embeddings, dtype=np.float32)
+
+
+# Lazy-loaded local embedding model
+_local_embed_model = None
+_local_embed_model_name = None
+
+
+def _get_local_embed_model(model_name_or_path: str):
+    """Lazy load the local embedding model using sentence-transformers."""
+    global _local_embed_model, _local_embed_model_name
+    if _local_embed_model is None or _local_embed_model_name != model_name_or_path:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers is required for local embedding. "
+                "Install it with: pip install sentence-transformers"
+            )
+        print(f"[RAG] Loading local embedding model: {model_name_or_path}")
+        device = os.getenv("LOCAL_EMBEDDING_DEVICE", "cpu")
+        _local_embed_model = SentenceTransformer(model_name_or_path, trust_remote_code=True, device=device)
+        _local_embed_model_name = model_name_or_path
+        print(f"[RAG] Local embedding model loaded successfully (device={device})")
+    return _local_embed_model
+
+
+def _embed_texts_local(texts: List[str], model_name_or_path: str, batch_size: int = 64) -> np.ndarray:
+    """Embed texts using local sentence-transformers model."""
+    model = _get_local_embed_model(model_name_or_path)
+    embeddings = model.encode(texts, batch_size=batch_size, show_progress_bar=False, convert_to_numpy=True)
+    return embeddings.astype(np.float32)
+
+
+def _embed_texts(texts: List[str], api_key: str, base_url: str, model: str, batch_size: int = 64) -> np.ndarray:
+    """Embed texts using either local or API model based on USE_LOCAL_EMBEDDING env var."""
+    use_local = os.getenv("USE_LOCAL_EMBEDDING", "0").lower() in ("1", "true", "yes")
+    
+    if use_local:
+        local_model_path = os.getenv("LOCAL_EMBEDDING_MODEL_PATH", "BAAI/bge-m3")
+        return _embed_texts_local(texts, local_model_path, batch_size)
+    else:
+        return _embed_texts_api(texts, api_key, base_url, model, batch_size)
 
 
 def _normalize(mat: np.ndarray) -> np.ndarray:
@@ -78,11 +121,21 @@ class StrategyCardIndex:
         self.top_k = top_k
         self.max_chars = max_chars
 
-        self.api_key = os.getenv("SILICONFLOW_API_KEY", "")
-        if not self.api_key:
-            raise RuntimeError("Missing SILICONFLOW_API_KEY for embeddings.")
-        self.base_url = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
-        self.model = os.getenv("SILICONFLOW_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
+        self.use_local = os.getenv("USE_LOCAL_EMBEDDING", "0").lower() in ("1", "true", "yes")
+        
+        if self.use_local:
+            self.local_model_path = os.getenv("LOCAL_EMBEDDING_MODEL_PATH", "BAAI/bge-m3")
+            self.model = self.local_model_path  # For cache key
+            self.api_key = "local"
+            self.base_url = "local"
+            print(f"[RAG] Using LOCAL embedding: {self.local_model_path}")
+        else:
+            self.api_key = os.getenv("SILICONFLOW_API_KEY", "")
+            if not self.api_key:
+                raise RuntimeError("Missing SILICONFLOW_API_KEY for embeddings.")
+            self.base_url = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+            self.model = os.getenv("SILICONFLOW_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
+            print(f"[RAG] Using API embedding: {self.model}")
 
         self.cache_dir = os.getenv("RAG_CACHE_DIR", "./rag_cache")
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -122,15 +175,18 @@ class StrategyCardIndex:
             with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
             if meta.get("card_uids") == self.card_uids:
+                print(f"[RAG] Loading cached embeddings from {emb_path}")
                 self.embeddings = np.load(emb_path)
                 self.embeddings = _normalize(self.embeddings)
                 return
 
+        print(f"[RAG] Building embeddings for {len(self.card_texts)} cards...")
         embeddings = _embed_texts(self.card_texts, self.api_key, self.base_url, self.model)
         embeddings = _normalize(embeddings)
         np.save(emb_path, embeddings)
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump({"card_uids": self.card_uids}, f, ensure_ascii=False)
+        print(f"[RAG] Embeddings cached to {emb_path}")
         self.embeddings = embeddings
 
     def retrieve(self, query: str, top_k: Optional[int] = None) -> List[RetrievedCard]:

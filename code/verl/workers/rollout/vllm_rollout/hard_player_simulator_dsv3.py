@@ -51,13 +51,22 @@ def _write_cache(cache_dir: str, key: str, content: str) -> None:
 
 
 def call_api(prompt, mode="dsv3"):
-    api_key = os.getenv("SILICONFLOW_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("Missing SILICONFLOW_API_KEY for simulator API calls.")
-
-    base_url = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
-    model = os.getenv("SILICONFLOW_CHAT_MODEL", "deepseek-ai/DeepSeek-V3.2")
+    """Call LLM for simulator response. Supports local vLLM or remote API."""
+    use_local = os.getenv("USE_LOCAL_SIMULATOR", "0").lower() in ("1", "true", "yes")
     cache_dir = os.getenv("SIMULATOR_CACHE_DIR", "./simulator_cache")
+    
+    if use_local:
+        # Use local vLLM server
+        base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:8000/v1")
+        model = os.getenv("LOCAL_LLM_MODEL_NAME", "Qwen2.5-7B-Instruct")
+        api_key = "dummy"  # Local server typically doesn't need auth
+    else:
+        # Use remote API (SiliconFlow)
+        api_key = os.getenv("SILICONFLOW_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("Missing SILICONFLOW_API_KEY for simulator API calls.")
+        base_url = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+        model = os.getenv("SILICONFLOW_CHAT_MODEL", "deepseek-ai/DeepSeek-V3.2")
 
     payload = {
         "model": model,
@@ -72,9 +81,11 @@ def call_api(prompt, mode="dsv3"):
 
     url = f"{base_url}/chat/completions"
     headers = {
-        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    if not use_local:
+        headers["Authorization"] = f"Bearer {api_key}"
+    
     resp = requests.post(url, headers=headers, json=payload, timeout=300)
     resp.raise_for_status()
     data = resp.json()
@@ -122,7 +133,16 @@ class PlayerSimulator:
                      "normal":"演员会分析他人的建议或者鼓舞，并接受其中的善意，言之有理的意见和安慰都能让你感到关心",
                      "hard":"演员比较刻薄，除非有特别贴切演员情绪价值的建议或者鼓励，否演员不会接受，且可能进行讽刺"}
 
-        self.eq_role_file = "/root/autodl-tmp/cognitive/data/train_profile.jsonl"
+        profile_path = os.getenv("RLVER_PROFILE_PATH", "").strip()
+        if not profile_path:
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../.."))
+            profile_path = os.path.join(repo_root, "data", "train_profile.jsonl")
+        self.eq_role_file = profile_path
+        if not os.path.exists(self.eq_role_file):
+            raise FileNotFoundError(
+                f"Profile jsonl not found: {self.eq_role_file}. "
+                "Set RLVER_PROFILE_PATH to override."
+            )
 
         self.role = self.generate_role("eq")
         self.chat_player(self.role)
@@ -452,28 +472,32 @@ Response:
             f.write(json.dumps(self.data_for_save, ensure_ascii=False) + "\n")
 
     def clone(self):
-        new_simulator = PlayerSimulator(self.save_dir) 
+        # NOTE: clone() is called inside rollouts to expand GRPO groups.
+        # It must be fast and must NOT call __init__ (which can trigger LLM calls).
+        new_simulator = self.__class__.__new__(self.__class__)
+
         new_simulator.api_key = self.api_key
         new_simulator.header = copy.deepcopy(self.header)
+        new_simulator.save_dir = self.save_dir
         new_simulator.negtive_prompt = self.negtive_prompt
         new_simulator.positive_prompt = self.positive_prompt
-        
+
         new_simulator.data = copy.deepcopy(self.data)
         new_simulator.point_group = copy.deepcopy(self.point_group)
         new_simulator.emo_point = self.emo_point
         new_simulator.emo_state = self.emo_state
         new_simulator.state_group = copy.deepcopy(self.state_group)
-        
+
         new_simulator.emo_trans = copy.deepcopy(self.emo_trans)
         new_simulator.emo_count = copy.deepcopy(self.emo_count)
         new_simulator.difficulty_prompt = copy.deepcopy(self.difficulty_prompt)
-        
+
         new_simulator.eq_role_file = self.eq_role_file
         new_simulator.topic = self.topic
-        
+
         new_simulator.role = copy.deepcopy(self.role)
-        
-        if hasattr(self, 'data_for_save'):
+
+        if hasattr(self, "data_for_save"):
             new_simulator.data_for_save = copy.deepcopy(self.data_for_save)
-        
+
         return new_simulator

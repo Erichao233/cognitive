@@ -182,7 +182,7 @@ trainer:
   test_freq: -1
   critic_warmup: 0
   default_hdfs_dir: null
-  remove_previous_ckpt_in_save: False
+  remove_previous_ckpt_in_save: True
   del_local_ckpt_after_load: False
   trajectory_injection: False
   trajectory_injection_threshold: -0.5

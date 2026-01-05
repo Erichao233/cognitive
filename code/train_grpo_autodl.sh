@@ -1,31 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GRPO + multi-turn simulator + RAG (AutoDL-friendly single-node runner)
+# GRPO + multi-turn simulator + RAG (Local Model Version for 3x H20 GPUs)
 #
 # Usage:
 #   bash code/train_grpo_autodl.sh
 #
-# Required env (must be set):
-#   SILICONFLOW_API_KEY
+# This version uses LOCAL models for both Simulator and Embedding to avoid API latency.
+# Required env:
+#   - For LOCAL mode (default): No API key needed
+#   - For API mode: Set USE_LOCAL_MODELS=0 and SILICONFLOW_API_KEY
+#
+# Local model requirements:
+#   - Simulator: vLLM server at LOCAL_LLM_BASE_URL (default: http://localhost:8000/v1)
+#   - Embedding: bge-m3 loaded via sentence-transformers (auto-downloaded or set LOCAL_EMBEDDING_MODEL_PATH)
 #
 # Optional env overrides:
-#   BASE_MODEL_PATH (default: /root/autodl-tmp/cache/hf/hub/models--Qwen--Qwen3-8B)
-#   CKPT_DIR (default: <repo>/ckpts/rlver_grpo_<timestamp>)
-#   TRAIN_BATCH_SIZE (default: 8)
-#   ROLLOUT_N (default: 2)                 # must be >= 2 for GRPO to make sense
-#   MAX_PROMPT_LENGTH (default: 2048)
-#   MAX_RESPONSE_LENGTH (default: 1024)
-#   PER_TURN_LENGTH (default: 256)
-#   MAX_TURNS (default: 8)
-#   GPU_MEMORY_UTILIZATION (default: 0.65)
-#   ROLLOUT_TEMPERATURE (default: 1.0)      # set 0.0 for deterministic debug runs
-#   ROLLOUT_TOP_P (default: 1.0)
-#   TOTAL_TRAINING_STEPS (default: 200)
-#   SMOKE_TEST (default: 0)                # set 1 to run 2 steps quickly
-#
-# Notes:
-# - With algorithm.adv_estimator=grpo, this repo will NOT create/init the critic worker/model.
+#   BASE_MODEL_PATH       - Training model path
+#   LOCAL_LLM_BASE_URL    - Local vLLM server URL (default: http://localhost:8000/v1)
+#   LOCAL_LLM_MODEL_NAME  - Model name for local vLLM (default: same as BASE_MODEL_PATH basename)
+#   LOCAL_EMBEDDING_MODEL_PATH - Local embedding model (default: BAAI/bge-m3)
+#   USE_LOCAL_MODELS      - 1 for local (default), 0 for API
+#   SMOKE_TEST            - 1 to run minimal test
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -33,48 +29,83 @@ CODE_DIR="${REPO_DIR}/code"
 
 cd "${CODE_DIR}"
 
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-16}"
-export HYDRA_FULL_ERROR="${HYDRA_FULL_ERROR:-1}"
-export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-export RLVER_THINKING="${RLVER_THINKING:-1}"
-export WANDB_MODE="${WANDB_MODE:-disabled}"
-export VERL_VLLM_CACHE_DEBUG="${VERL_VLLM_CACHE_DEBUG:-1}"
-export VERL_VLLM_HARD_CLEAR="${VERL_VLLM_HARD_CLEAR:-1}"
+# ============ GPU Configuration (3x H20) ============
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2}"
+N_GPUS=3
+
+# ============ Local vs API Mode ============
+USE_LOCAL_MODELS="${USE_LOCAL_MODELS:-1}"
+
+if [[ "${USE_LOCAL_MODELS}" == "1" ]]; then
+  echo "=== Using LOCAL models (no API calls) ==="
+  export LOCAL_LLM_BASE_URL="${LOCAL_LLM_BASE_URL:-http://localhost:8000/v1}"
+  export SIMULATOR_SERVED_MODEL_NAME="${SIMULATOR_SERVED_MODEL_NAME:-${LOCAL_LLM_MODEL_NAME:-Qwen2.5-7B-Instruct}}"
+  export LOCAL_LLM_MODEL_NAME="${LOCAL_LLM_MODEL_NAME:-${SIMULATOR_SERVED_MODEL_NAME}}"
+  export LOCAL_EMBEDDING_MODEL_PATH="${LOCAL_EMBEDDING_MODEL_PATH:-BAAI/bge-m3}"
+  export LOCAL_EMBEDDING_DEVICE="${LOCAL_EMBEDDING_DEVICE:-cpu}"
+  export USE_LOCAL_EMBEDDING="1"
+  export USE_LOCAL_SIMULATOR="1"
+  # Dummy API key to pass validation (not actually used)
+  export SILICONFLOW_API_KEY="${SILICONFLOW_API_KEY:-dummy_key_for_local_mode}"
+else
+  echo "=== Using API models (SiliconFlow) ==="
+  if [[ -z "${SILICONFLOW_API_KEY:-}" ]]; then
+    echo "Missing env var: SILICONFLOW_API_KEY" >&2
+    exit 1
+  fi
+  export USE_LOCAL_EMBEDDING="0"
+  export USE_LOCAL_SIMULATOR="0"
+fi
 
 export SILICONFLOW_BASE_URL="${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}"
 export SILICONFLOW_EMBEDDING_MODEL="${SILICONFLOW_EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-4B}"
 export SILICONFLOW_CHAT_MODEL="${SILICONFLOW_CHAT_MODEL:-deepseek-ai/DeepSeek-V3.2}"
 
-if [[ -z "${SILICONFLOW_API_KEY:-}" ]]; then
-  echo "Missing env var: SILICONFLOW_API_KEY" >&2
-  exit 1
-fi
+# ============ General Settings ============
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-16}"
+export HYDRA_FULL_ERROR="${HYDRA_FULL_ERROR:-1}"
+export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+export RLVER_THINKING="${RLVER_THINKING:-1}"
+export WANDB_MODE="${WANDB_MODE:-disabled}"
+export VERL_VLLM_CACHE_DEBUG="${VERL_VLLM_CACHE_DEBUG:-0}"
+export VERL_VLLM_HARD_CLEAR="${VERL_VLLM_HARD_CLEAR:-1}"
 
 export RAG_CACHE_DIR="${RAG_CACHE_DIR:-${REPO_DIR}/rag_cache}"
 export SIMULATOR_CACHE_DIR="${SIMULATOR_CACHE_DIR:-${REPO_DIR}/simulator_cache}"
 export SIMULATOR_LOG_DIR="${SIMULATOR_LOG_DIR:-${REPO_DIR}/simulator_logs}"
 export ROLLOUT_LOG_DIR="${ROLLOUT_LOG_DIR:-${REPO_DIR}/rollout_logs}"
 
+# ============ Model & Training Parameters ============
 BASE_MODEL_PATH="${BASE_MODEL_PATH:-/root/autodl-tmp/cache/hf/hub/models--Qwen--Qwen2.5-7B-Instruct}"
-TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
-# GRPO group size (responses per prompt). Set to 4 for stronger within-group comparison.
+
+# Batch size must be divisible by N_GPUS (3). Using 6 for balanced throughput.
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-6}"
+# GRPO group size. Higher = better comparison but more VRAM.
 ROLLOUT_N="${ROLLOUT_N:-4}"
-MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-512}"
-PER_TURN_LENGTH="${PER_TURN_LENGTH:-128}"
-MAX_TURNS="${MAX_TURNS:-4}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.40}"
-ENABLE_CHUNKED_PREFILL="${ENABLE_CHUNKED_PREFILL:-false}"
-MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-4096}"
-PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-8192}"
-PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
+# Sequence lengths - optimized for 8-10 turn dialogues
+# Each turn: ~256 (agent) + ~128 (user) = ~384 tokens
+# 8 turns = ~3072 tokens response, plus ~2048 prompt = ~5120 total
+MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-3072}"
+PER_TURN_LENGTH="${PER_TURN_LENGTH:-256}"
+MAX_TURNS="${MAX_TURNS:-8}"
+# Memory settings for 3x 96GB H20 (with longer sequences)
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.60}"
+ENABLE_CHUNKED_PREFILL="${ENABLE_CHUNKED_PREFILL:-true}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
+PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-20000}"
+PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-6}"
+# Sampling
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.0}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-1.0}"
+# Rewards
 FORMAT_REWARD="${FORMAT_REWARD:-0.02}"
 FORMAT_PENALTY="${FORMAT_PENALTY:-0.0}"
-TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-50}"
+# Training steps
+TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-200}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-1}"
+# Checkpoint frequency (less frequent to save space)
+SAVE_FREQ="${SAVE_FREQ:-100}"
 SMOKE_TEST="${SMOKE_TEST:-0}"
 RAG_ENABLED="${RAG_ENABLED:-true}"
 
@@ -108,6 +139,14 @@ if [[ ! -f "${BASE_MODEL_PATH}/config.json" ]]; then
   exit 1
 fi
 
+# Resolve local embedding snapshot if user points to HF cache directory (models--*/snapshots/*).
+if [[ "${USE_LOCAL_MODELS}" == "1" ]]; then
+  if [[ -d "${LOCAL_EMBEDDING_MODEL_PATH}" ]]; then
+    LOCAL_EMBEDDING_MODEL_PATH="$(resolve_hf_snapshot "${LOCAL_EMBEDDING_MODEL_PATH}")"
+    export LOCAL_EMBEDDING_MODEL_PATH
+  fi
+fi
+
 RAG_PATH="${RAG_PATH:-${REPO_DIR}/data/strategy_cards.jsonl}"
 if [[ ! -f "${RAG_PATH}" ]]; then
   echo "Missing strategy cards file: ${RAG_PATH}" >&2
@@ -123,41 +162,69 @@ if [[ "${SMOKE_TEST}" == "1" ]]; then
   echo "SMOKE_TEST=1: overriding to a tiny run" >&2
   TOTAL_TRAINING_STEPS=2
   TOTAL_EPOCHS=1
-  TRAIN_BATCH_SIZE=4
+  TRAIN_BATCH_SIZE=3
   ROLLOUT_N=2
   MAX_PROMPT_LENGTH=512
   MAX_RESPONSE_LENGTH=256
   PER_TURN_LENGTH=64
-  MAX_TURNS=1
+  MAX_TURNS=2
   GPU_MEMORY_UTILIZATION=0.45
   ENABLE_CHUNKED_PREFILL=false
   MAX_NUM_BATCHED_TOKENS=2048
   PPO_MAX_TOKEN_LEN_PER_GPU=4096
-  PPO_MINI_BATCH_SIZE=4
+  PPO_MINI_BATCH_SIZE=3
+  SAVE_FREQ=1
   RAG_ENABLED=true
 fi
 
-# Keep dataloader length aligned with TOTAL_TRAINING_STEPS for clearer progress bars and fewer dataset samples.
 VIRTUAL_DATASET_SIZE="${VIRTUAL_DATASET_SIZE:-$(( TOTAL_TRAINING_STEPS * TRAIN_BATCH_SIZE ))}"
 VAL_VIRTUAL_DATASET_SIZE="${VAL_VIRTUAL_DATASET_SIZE:-$(( TRAIN_BATCH_SIZE * 4 ))}"
 
-# DataProto is split across DP world_size; generation requires train_batch_size divisible by n_gpus.
-N_GPUS=4
-if [[ "${CUDA_VISIBLE_DEVICES}" == *","* ]]; then
-  N_GPUS=$(( $(echo "${CUDA_VISIBLE_DEVICES}" | awk -F',' '{print NF}') ))
-elif [[ -n "${CUDA_VISIBLE_DEVICES}" ]]; then
-  N_GPUS=1
-fi
+# Validate batch size divisibility
 if (( TRAIN_BATCH_SIZE % N_GPUS != 0 )); then
-  echo "train_batch_size must be divisible by number of visible GPUs. train_batch_size=${TRAIN_BATCH_SIZE}, CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}" >&2
+  echo "train_batch_size must be divisible by number of visible GPUs. train_batch_size=${TRAIN_BATCH_SIZE}, N_GPUS=${N_GPUS}" >&2
   exit 1
 fi
 
+echo "============================================="
+echo "RLVER Training Configuration"
+echo "============================================="
 echo "Repo: ${REPO_DIR}"
 echo "CKPT_DIR: ${CKPT_DIR}"
 echo "BASE_MODEL_PATH: ${BASE_MODEL_PATH}"
-echo "ROLLOUT_N: ${ROLLOUT_N}"
+echo "GPUs: ${N_GPUS} (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES})"
+echo "Batch: train=${TRAIN_BATCH_SIZE}, rollout_n=${ROLLOUT_N}"
 echo "Lengths: prompt=${MAX_PROMPT_LENGTH}, response=${MAX_RESPONSE_LENGTH}, per_turn=${PER_TURN_LENGTH}, max_turns=${MAX_TURNS}"
+echo "Local Models: USE_LOCAL_MODELS=${USE_LOCAL_MODELS}"
+if [[ "${USE_LOCAL_MODELS}" == "1" ]]; then
+  echo "  Simulator: ${LOCAL_LLM_BASE_URL} (model: ${LOCAL_LLM_MODEL_NAME})"
+  echo "  Embedding: ${LOCAL_EMBEDDING_MODEL_PATH}"
+  echo "  Embedding device: ${LOCAL_EMBEDDING_DEVICE}"
+fi
+echo "Save frequency: every ${SAVE_FREQ} steps"
+echo "============================================="
+
+if [[ "${USE_LOCAL_MODELS}" == "1" ]]; then
+  # Fail fast if local simulator server is not reachable.
+  if command -v curl >/dev/null 2>&1; then
+    if ! curl -fsS --max-time 2 "${LOCAL_LLM_BASE_URL}/models" >/dev/null; then
+      echo "Local simulator server is not reachable at ${LOCAL_LLM_BASE_URL}." >&2
+      echo "Start it with: bash code/start_local_simulator.sh" >&2
+      exit 1
+    fi
+  fi
+
+  # Ensure local embedding dependency exists.
+  python - <<'PY'
+import sys
+try:
+    import sentence_transformers  # noqa: F401
+except Exception as e:
+    print("Missing dependency for local embeddings: sentence-transformers", file=sys.stderr)
+    print("Install with: pip install sentence-transformers", file=sys.stderr)
+    raise
+PY
+fi
 
 python -m verl.trainer.main_ppo \
   algorithm.adv_estimator=grpo \
@@ -165,14 +232,14 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.actor.use_kl_loss=False \
   actor_rollout_ref.actor.kl_loss_coef=0.0 \
   trainer.nnodes=1 \
-  trainer.n_gpus_per_node=4 \
+  trainer.n_gpus_per_node="${N_GPUS}" \
   trainer.logger='[console]' \
   trainer.total_training_steps="${TOTAL_TRAINING_STEPS}" \
   trainer.total_epochs="${TOTAL_EPOCHS}" \
   trainer.default_local_dir="${CKPT_DIR}" \
   +trainer.val_before_train=False \
-  trainer.save_freq=50 \
-  trainer.save_rollout=True \
+  trainer.save_freq="${SAVE_FREQ}" \
+  trainer.save_rollout=False \
   +data.virtual_dataset_size="${VIRTUAL_DATASET_SIZE}" \
   +data.val_virtual_dataset_size="${VAL_VIRTUAL_DATASET_SIZE}" \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
